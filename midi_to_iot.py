@@ -4,15 +4,22 @@ import os
 import time
 import requests
 import asyncio
+import websockets
+import json
+import http.server
+import socketserver
+import threading
+import webbrowser
 
-dir_path = os.path.dirname(os.path.realpath(__file__))
-lamp_on_url_path = os.path.join(dir_path, "lamp_on_url.txt")
-lamp_off_url_path = os.path.join(dir_path, "lamp_off_url.txt")
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=".", **kwargs)
 
+PORT = 8090
+WS_PORT = 8089
 CC_CODE = 176
-DEBOUNCE_TIME_SECONDS = 0.25
-TRIGGER_ON_URL = next(open(lamp_on_url_path))
-TRIGGER_OFF_URL = next(open(lamp_off_url_path))
+DEBOUNCE_TIME_SECONDS = 0.10
+WS_CONNECTIONS = set()
 
 record_enabled = False
 playing = False
@@ -26,13 +33,13 @@ def schedule_debounced(task, arg):
         scheduled_event.cancel()
     scheduled_event = event_loop.call_later(DEBOUNCE_TIME_SECONDS, task, arg)
 
-def switch_lamp(on):
-    url = TRIGGER_ON_URL if on else TRIGGER_OFF_URL
-    response = requests.post(url=url)
-    if response.ok:
-        print("Set recording lamp to", "on" if on else "off")
-    else:
-        print("Unable to change lamp. HTTP status code:", response.status_code)
+def start_http_server():
+    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+        print("serving at port", PORT)
+        httpd.serve_forever()
+
+def send_message_to_front_end(msg):
+    websockets.broadcast(WS_CONNECTIONS, json.dumps(msg))
 
 def on_play_changed(midi_val):
     global record_enabled, playing
@@ -40,14 +47,14 @@ def on_play_changed(midi_val):
     if not record_enabled:
         # get rid of this 'if' if you want to trigger on any play/pause change
         return
-    schedule_debounced(switch_lamp, playing)
+    schedule_debounced(send_message_to_front_end, { 'recording' : playing })
 
 def on_record_enabled(midi_val):
     global record_enabled, playing
     record_enabled = midi_val > 0
     if not playing:
         return
-    schedule_debounced(switch_lamp, record_enabled)
+    schedule_debounced(send_message_to_front_end, { 'recording' : record_enabled })
 
 def process_message(message):
     if message[0] != CC_CODE:
@@ -71,6 +78,17 @@ async def main_loop():
             process_message(message)
         await asyncio.sleep(0.005)
 
+async def ws_handler(websocket):
+    WS_CONNECTIONS.add(websocket)
+    try:
+        await websocket.wait_closed()
+    finally:
+        WS_CONNECTIONS.remove(websocket)
+
+async def websocket_loop():
+    async with websockets.serve(ws_handler, "localhost", WS_PORT):
+        await asyncio.Future()  
+
 try:
     midiin, port_name = open_midiinput(None, port_name="MIDI to IOT", use_virtual=True, interactive=False)
 except (EOFError, KeyboardInterrupt):
@@ -80,6 +98,9 @@ print("MIDI to IOT monitor running. Press Control-C to exit.")
 
 try:
     asyncio.ensure_future(main_loop())
+    asyncio.ensure_future(websocket_loop())
+    threading.Thread(target=start_http_server).start()
+    webbrowser.open(f'http://localhost:{PORT}/recording.html')
     event_loop.run_forever()
 except KeyboardInterrupt:
     print('')

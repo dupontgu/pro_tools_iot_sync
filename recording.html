@@ -1,0 +1,24 @@
+<html>
+
+<body>
+    <script>
+        let socket = new WebSocket("ws://localhost:8089");
+        socket.onmessage = function (event) {
+            console.log(event)
+            let parsedEvent = JSON.parse(event.data)
+            if (parsedEvent.recording != undefined) {
+                let headerMessage = parsedEvent.recording ? "Recording!" : "Not Recording."
+                let color = parsedEvent.recording ? "#FF0000" : "#000000"
+                let header = document.getElementById("header")
+                header.innerText = headerMessage
+                header.style.color = color
+            }
+        };
+    </script>
+
+    <h1 id="header">
+        Waiting for update...
+    </h1>
+</body>
+
+</html>
