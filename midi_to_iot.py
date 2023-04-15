@@ -1,4 +1,4 @@
-from rtmidi.midiutil import open_midiinput, open_midioutput
+import rtmidi2 as rtmidi
 import sys
 import os
 import time
@@ -67,12 +67,12 @@ async def main_loop():
     while True:
         msg = midiin.get_message()
         if msg:
-            message, deltatime = msg
-            process_message(message)
+            process_message(msg)
         await asyncio.sleep(0.005)
 
 try:
-    midiin, port_name = open_midiinput(None, port_name="MIDI to IOT", use_virtual=True, interactive=False)
+    midiin = rtmidi.MidiIn()
+    midiin.open_virtual_port("MIDI to IOT")
 except (EOFError, KeyboardInterrupt):
     sys.exit()
 
